@@ -2,7 +2,6 @@ import random
 import logging
 import math
 
-
 from heat import (LOW_DANGER,
                   MEDIUM_DANGER,
                   HIGH_DANGER,
@@ -19,8 +18,14 @@ This is a simple Battlesnake server written in Python.
 For instructions see https://github.com/BattlesnakeOfficial/starter-snake-python/README.md
 """
 
-
 logger = logging.getLogger(__name__)
+
+
+class Score(dict):
+
+    @property
+    def total(self):
+        return sum(self.values())
 
 
 class Point:
@@ -174,7 +179,7 @@ class Snake:
         self.tail = SnakeTailPart(x=snake_json["body"][-1]["x"], y=snake_json["body"][-1]["y"])
         self.body = [SnakeBodyPart(x=body_part["x"], y=body_part["y"]) for body_part in snake_json["body"][1:-1]]
 
-        self.size = len(self.body) + 2  #adding the head and the tail
+        self.size = len(self.body) + 2  # adding the head and the tail
 
     def __repr__(self):
         return self.name
@@ -186,12 +191,17 @@ class Snake:
 class GameState:
     def __init__(self, data):
 
+        self.turn = data["turn"]
         self.height = data["board"]['height']
         self.width = data["board"]['width']
         self.me = Snake(data["you"])
+        self.middle = Point(x=self.width // 2, y=self.height // 2)
         self.snakes = []
         self.food = []
-        self.grid = [[Safe(x=row, y=col) if row in [0, self.width - 1] or col in [0, self.height - 1] else Safe(x=row, y=col) for col in range(self.height)] for row in range(self.width)]
+        self.grid = [[MediumDanger(x=row, y=col) if (row == 0 and col == 0) or (
+                    row == 0 and col == self.height - 1) or (row == self.width - 1 and col == self.height - 1) or (
+                    row == self.width - 1 and col == 0) else Safe(x=row, y=col) for
+                      col in range(self.height)] for row in range(self.width)]
 
         # add food to the board
         for food in data["board"]["food"]:
@@ -314,8 +324,61 @@ class GameState:
                 biggest_size = snake.size
         return biggest_snake
 
+    def best_move_score(self):
+        moves = {"up": {"move": self.get_point_up(self.me.head), "score": Score()},
+                 "down": {"move": self.get_point_down(self.me.head), "score": Score()},
+                 "right": {"move": self.get_point_right(self.me.head), "score": Score()},
+                 "left": {"move": self.get_point_left(self.me.head), "score": Score()}}
+
+        print("MOVES: ", moves)
+
+        valid_moves = {}
+
+        biggest_enemy_snake = self.find_biggest_enemny_snake()
+
+        for move_key, move_data in moves.items():
+            if isinstance(move_data["move"], Safe) or isinstance(move_data["move"], HighDanger):
+                # edit the score
+                move_data["score"]["heat"] = move_data["move"].heat  # the move heat
+                move_data["score"]["distance_middle"] = move_data["move"].distance(self.middle) * 1.5
+                move_data["score"]["move_surrounding_heat"] = self.surrounding_heat(move_data["move"]) / 10
+                move_data["score"]["path_to_tail"] = -10 if self.possible_path(start=move_data["move"], end=self.me.tail) else 0
+
+                if self.food:
+                    distance_food = move_data["move"].distance(self.food[0])
+
+                    if self.me.health < distance_food + 2 or (biggest_enemy_snake and self.me.size <= biggest_enemy_snake.size - 1):
+                        print("GOING FOR FOOD")
+                        move_data["score"]["food"] = move_data["move"].distance(self.food[0]) * 2
+
+                if biggest_enemy_snake is not None and self.me.size > biggest_enemy_snake.size:
+                    closest_smaller_snake = self.snakes[1]
+                    move_data["score"]["kill"] = -(move_data["move"].distance(closest_smaller_snake.head))
+
+                valid_moves.update({move_key: move_data})
+
+        sorted_moves = [(k, v["move"], v["score"]) for k, v in
+                        sorted(valid_moves.items(), key=lambda item: item[1]["score"].total)]
+
+        print("VALID MOVES: ", sorted_moves)
+
+        for move, point, _ in sorted_moves:
+            print("CHOSEN MOVE: ", move)
+            return move
+
+        # default to the best move if no possible path
+        print("LAST RESORT MOVE: ", sorted_moves[0][0])
+        return sorted_moves[0][0]
+
+    def surrounding_heat(self, point: Point):
+        return self.get_point_up(point).heat + \
+               self.get_point_down(point).heat + \
+               self.get_point_left(point).heat + \
+               self.get_point_right(point).heat
+
     def best_move(self):
         """ Spaghetti
+            Top 42!
         :return:
         """
 
@@ -324,6 +387,7 @@ class GameState:
                  "right": self.get_point_right(self.me.head),
                  "left": self.get_point_left(self.me.head)}
 
+        # shuffle
         list_moves = list(moves.items())
         random.shuffle(list_moves)
         moves = dict(list_moves)
@@ -362,12 +426,12 @@ class GameState:
                             same_best_move.append(k)
 
                     # check if there's a path after that move
-                    if best_food_move in same_best_move and self.possible_path(moves[best_food_move], self.me.tail):
+                    if best_food_move in same_best_move and self.possible_path(moves[best_food_move]):
                         print("FOOD MOVE: ", best_food_move)
                         return best_food_move
         else:
             # if i'm the biggest go kill
-            if self.food:
+            if self.snakes:
                 # check if food is available
                 closest_smaller_snake = self.snakes[1]
 
@@ -383,26 +447,32 @@ class GameState:
                     if v.heat == moves[next(iter(moves))].heat:
                         same_best_move.append(k)
 
-                if best_snake_kill_move in same_best_move and self.possible_path(moves[best_snake_kill_move], self.me.tail):
+                if best_snake_kill_move in same_best_move and self.possible_path(moves[best_snake_kill_move]):
                     print("KILL MOVE: ", best_snake_kill_move)
                     return best_snake_kill_move
 
         # if food or kill was not the way to go
         for key, value in moves.items():
-            if isinstance(value, Safe):
-                possible = self.possible_path(value, self.me.tail)
+            if isinstance(value, Safe) or isinstance(value, HighDanger):
 
-                if possible is not None:
-                    print("DEFAULT MOVE: ", key)
+                marks = self.possible_path(value, self.me.tail)
+
+                if marks:
+                    print(f"MARKS - {key} :", marks)
+                    print("BEST DEFAULT MOVE: ", key)
                     return key
 
         # default to the best move if no possible path
         print("LAST RESORT MOVE: ", next(iter(moves)))
         return next(iter(moves))
 
-    def possible_path(self, start: Point, end: Point):
+    def possible_path(self, start: Point, end: Point = None, end_type=SnakeTailPart):
 
         queue = [start]
+
+        seen = set()
+        seen.add((start.x, start.y))
+        total_seen = 0
 
         while queue:
 
@@ -413,12 +483,18 @@ class GameState:
                                   self.get_point_right(last_element),
                                   self.get_point_left(last_element)]:
 
-                if possible_move == end:
-                    return True
+                total_seen += 1
 
-                if not (possible_move.marked or isinstance(possible_move, Wall)) and (isinstance(possible_move, Safe or isinstance(possible_move, MediumDanger))):
+                if (end and possible_move == end) or (end_type and isinstance(possible_move, end_type)):
+                    return total_seen
+
+                if not ((possible_move.x, possible_move.y) in seen) and (isinstance(possible_move, Safe)):
+                    seen.add((possible_move.x, possible_move.y))
+
                     possible_move.mark()
                     queue.append(possible_move)
+
+        return 0
 
     def __str__(self):
         """Return an ASCII art representation of the board"""
@@ -526,14 +602,21 @@ class Battlesnake(object):
         # TODO: Use the information in cherrypy.request.json to decide your next move.
 
         data = cherrypy.request.json
-
+        print("++++++++++++++++")
+        print(data)
+        print("++++++++++++++++")
         self.game_state = GameState(data=data)
+
+        print("TURN: ", self.game_state.turn)
 
         print(self.game_state)
 
-        best_move = self.game_state.best_move()
-
-        # print(self.game_state)
+        for snake in self.game_state.snakes:
+            if snake.name == "Sssevendaysnake":
+                best_move = self.game_state.best_move()
+                break
+        else:
+            best_move = self.game_state.best_move_score()
 
         return {"move": best_move}
 

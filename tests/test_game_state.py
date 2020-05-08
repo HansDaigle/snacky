@@ -1,5 +1,5 @@
 from server import GameState
-from tests import turn_0, turn_5, turn_3
+from tests import turn_no_path, turn_path, turn_3, turn_no_path_2, turn_path_2
 
 
 def test_create_board():
@@ -7,29 +7,41 @@ def test_create_board():
     gs = GameState(data=turn_3)
     print(gs)
 
-    best_move = gs.best_move_around()
 
-    print(gs)
-
-    print(best_move)
-
-
-def test_astar():
-    gs = GameState(data=turn_5)
-
-    print(gs)
-
-    print(astar(gs.grid, gs.me.head, gs.me.tail))
-
-    print(gs)
-
-def test_bm():
+def test_nest_move_2():
     gs = GameState(data=turn_3)
-    print(gs)
-
-    best_move = gs.best_move()
 
     print(gs)
+    gs.best_move_score()
 
-    print(best_move)
+    print(gs)
+
+
+def test_path_to_tail():
+
+    # possible path 1
+    gs = GameState(data=turn_path)
+    print(gs)
+
+    path = gs.possible_path(gs.me.head, gs.me.tail)
+    assert bool(path)
+    print(gs)
+    print(path)
+
+    # possible path 2
+    gs = GameState(data=turn_path_2)
+    print(gs)
+
+    path = gs.possible_path(gs.get_point_up(gs.me.head), gs.me.tail)
+    assert bool(path)
+    print(gs)
+    print(path)
+
+    # no path 1
+    gs = GameState(data=turn_no_path)
+    print(gs)
+    path = gs.possible_path(gs.get_point_left(gs.me.head), end=gs.me.tail)
+    assert not bool(path)
+    print(gs)
+    print(path)
 

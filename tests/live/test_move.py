@@ -1,2 +1,0 @@
-
-def test_path_algo
