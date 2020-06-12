@@ -198,10 +198,16 @@ class GameState:
         self.middle = Point(x=self.width // 2, y=self.height // 2)
         self.snakes = []
         self.food = []
-        self.grid = [[MediumDanger(x=row, y=col) if (row == 0 and col == 0) or (
-                    row == 0 and col == self.height - 1) or (row == self.width - 1 and col == self.height - 1) or (
-                    row == self.width - 1 and col == 0) else Safe(x=row, y=col) for
+
+        # all around
+        self.grid = [[LowDanger(x=row, y=col) if (row == 0 or col == 0 or row == self.height - 1 or col == self.width - 1) else Safe(x=row, y=col) for
                       col in range(self.height)] for row in range(self.width)]
+
+        # 4 corners
+        # self.grid = [[LowDanger(x=row, y=col) if (row == 0 and col == 0) or (
+        #             row == 0 and col == self.height - 1) or (row == self.width - 1 and col == self.height - 1) or (
+        #             row == self.width - 1 and col == 0) else Safe(x=row, y=col) for
+        #               col in range(self.height)] for row in range(self.width)]
 
         # add food to the board
         for food in data["board"]["food"]:
@@ -252,7 +258,7 @@ class GameState:
         """
         if point:
             try:
-                if isinstance(self.get_point(point), Safe):
+                if isinstance(self.get_point(point), Safe) or self.get_point(point).heat < point.heat:
                     self.grid[point.x][point.y] = point
 
                 else:
@@ -297,23 +303,43 @@ class GameState:
         # add danger around bigger enemy snakes head
         if self.me.id != snake.id:
             if len(self.me.body) <= len(snake.body):
-                self.add_surrounding(snake.head, surrounding_type=HighDanger)
+                self.add_surrounding(snake.head, surrounding_type=HighDanger, dept=1)
             else:
                 self.add_surrounding(snake.head, surrounding_type=Kill)
 
-    def add_surrounding(self, point: Point, surrounding_type):
+    def add_surrounding(self, point: Point, surrounding_type, dept=0):
 
         point_down = self.get_point_down(point)
         self.add_point(surrounding_type(x=point_down.x, y=point_down.y))
 
+        if dept > 0:
+            self.add_surrounding(point=point_down,
+                                 surrounding_type=surrounding_type,
+                                 dept=dept - 1)
+
         point_right = self.get_point_right(point)
         self.add_point(surrounding_type(x=point_right.x, y=point_right.y))
+
+        if dept > 0:
+            self.add_surrounding(point=point_right,
+                                 surrounding_type=surrounding_type,
+                                 dept=dept - 1)
 
         point_up = self.get_point_up(point)
         self.add_point(surrounding_type(x=point_up.x, y=point_up.y))
 
+        if dept > 0:
+            self.add_surrounding(point=point_up,
+                                 surrounding_type=surrounding_type,
+                                 dept=dept - 1)
+
         point_left = self.get_point_left(point)
         self.add_point(surrounding_type(x=point_left.x, y=point_left.y))
+
+        if dept > 0:
+            self.add_surrounding(point=point_left,
+                                 surrounding_type=surrounding_type,
+                                 dept=dept - 1)
 
     def find_biggest_enemny_snake(self):
         biggest_snake = None
@@ -336,24 +362,29 @@ class GameState:
 
         biggest_enemy_snake = self.find_biggest_enemny_snake()
 
+        food_multiplier = 1 if self.me.size > 10 else 1.5
+        kill_multiplier = 1.2
+        distance_middle_multiplier = 2
+
         for move_key, move_data in moves.items():
             if isinstance(move_data["move"], Safe) or isinstance(move_data["move"], HighDanger):
+
                 # edit the score
-                move_data["score"]["heat"] = move_data["move"].heat  # the move heat
-                move_data["score"]["distance_middle"] = move_data["move"].distance(self.middle) * 1.5
-                move_data["score"]["move_surrounding_heat"] = self.surrounding_heat(move_data["move"]) / 10
+                move_data["score"]["heat"] = move_data["move"].heat
+                move_data["score"]["distance_middle"] = move_data["move"].distance(self.middle) * distance_middle_multiplier
+                move_data["score"]["move_surrounding_heat"] = self.surrounding_heat(move_data["move"]) / 20
                 move_data["score"]["path_to_tail"] = -10 if self.possible_path(start=move_data["move"], end=self.me.tail) else 0
 
                 if self.food:
                     distance_food = move_data["move"].distance(self.food[0])
+                    if self.me.health < distance_food + 2:
+                        food_multiplier *= 2
 
-                    if self.me.health < distance_food + 2 or (biggest_enemy_snake and self.me.size <= biggest_enemy_snake.size - 1):
-                        print("GOING FOR FOOD")
-                        move_data["score"]["food"] = move_data["move"].distance(self.food[0]) * 2
+                    move_data["score"]["food"] = distance_food * food_multiplier
 
                 if biggest_enemy_snake is not None and self.me.size > biggest_enemy_snake.size:
                     closest_smaller_snake = self.snakes[1]
-                    move_data["score"]["kill"] = -(move_data["move"].distance(closest_smaller_snake.head))
+                    move_data["score"]["kill"] = move_data["move"].distance(closest_smaller_snake.head) * kill_multiplier
 
                 valid_moves.update({move_key: move_data})
 
@@ -367,8 +398,11 @@ class GameState:
             return move
 
         # default to the best move if no possible path
-        print("LAST RESORT MOVE: ", sorted_moves[0][0])
-        return sorted_moves[0][0]
+        if sorted_moves:
+            print("LAST RESORT MOVE: ", sorted_moves[0][0])
+            return sorted_moves[0][0]
+
+        # Dead...
 
     def surrounding_heat(self, point: Point):
         return self.get_point_up(point).heat + \
@@ -488,7 +522,7 @@ class GameState:
                 if (end and possible_move == end) or (end_type and isinstance(possible_move, end_type)):
                     return total_seen
 
-                if not ((possible_move.x, possible_move.y) in seen) and (isinstance(possible_move, Safe)):
+                if not ((possible_move.x, possible_move.y) in seen) and (isinstance(possible_move, Safe) or isinstance(possible_move, HighDanger)):
                     seen.add((possible_move.x, possible_move.y))
 
                     possible_move.mark()
@@ -571,7 +605,7 @@ class Battlesnake(object):
     @cherrypy.expose
     def index(self):
         # If you open your snake URL in a browser you should see this message.
-        return "I just bite sometimes!"
+        return "Hi I'm Snacky and I snack all the time"
 
     @cherrypy.expose
     def ping(self):
@@ -591,7 +625,7 @@ class Battlesnake(object):
 
         print("Starting a new game")
 
-        return {"color": "#888888", "headType": "regular", "tailType": "regular"}
+        return {"color": "#E80978", "headType": "pixel", "tailType": "pixel"}
 
     @cherrypy.expose
     @cherrypy.tools.json_in()
