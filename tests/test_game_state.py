@@ -1,5 +1,5 @@
-from server import GameState
-from tests import turn_no_path, turn_path, turn_3, turn_no_path_2, turn_path_2
+from snacky.server import GameState
+from tests import turn_no_path, turn_path, turn_3, turn_path_2
 
 
 def test_create_board():
@@ -45,3 +45,24 @@ def test_path_to_tail():
     print(gs)
     print(path)
 
+
+def test_astar():
+
+    # possible path 1
+    gs = GameState(data=turn_path_2)
+    print(gs)
+
+    path = gs.astar(gs.me.head, gs.me.tail)
+    assert bool(path)
+
+    print(gs)
+    print(path)
+
+    # no path 1
+    gs = GameState(data=turn_no_path)
+    print(gs)
+
+    path = gs.astar(gs.me.head, gs.me.tail)
+    assert bool(path)
+    print(gs)
+    print(path)
