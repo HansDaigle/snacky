@@ -27,6 +27,12 @@ class Score(dict):
     def total(self):
         return sum(self.values())
 
+class Move:
+    def __init__(self, direction, point):
+        self.direction = direction
+        self.point = point
+        self.score = Score()
+
 
 class Point:
     """ A point with x and y coordinates
@@ -209,7 +215,6 @@ class GameState:
 
         :param data: game state data received before each turn
         """
-
         self.turn = data["turn"]
         self.height = data["board"]['height']
         self.width = data["board"]['width']
@@ -268,22 +273,23 @@ class GameState:
         """
         return self.get_point(Point(point.x - 1, point.y))
 
-    def get_surrounding_points(self, point: Point):
+    def get_surrounding_moves(self, point: Point) -> list:
         """ Easy way of returning all surrounding points of a given point
 
         :param point: initial point
         :return: all 4 points around the initial point
         """
-        return [self.get_point_up(point),
-                self.get_point_down(point),
-                self.get_point_right(point),
-                self.get_point_left(point)]
 
-    def get_possible_moves(self, point: Point, exception=None):
+        return [Move(direction="up", point=self.get_point_up(point)),
+                Move(direction="down", point=self.get_point_down(point)),
+                Move(direction="right", point=self.get_point_right(point)),
+                Move(direction="left", point=self.get_point_left(point))]
+
+    def get_possible_moves(self, point: Point, exception: Point = None):
         possible_moves = []
 
-        for move in self.get_surrounding_points(point):
-            if isinstance(move, Safe) or isinstance(move, HighDanger) or move == exception:
+        for move in self.get_surrounding_moves(point):
+            if isinstance(move.point, Safe) or isinstance(move.point, HighDanger) or (exception and move.point == exception) or (self.turn >= 3 and self.me.health < 100 and move.point == self.me.tail):
                 possible_moves.append(move)
 
         return possible_moves
@@ -378,12 +384,12 @@ class GameState:
         :param dept: Recursively add the heat to points
         """
 
-        for surrounding_point in self.get_surrounding_points(point):
-            self._add_point(point_type(x=surrounding_point.x, y=surrounding_point.y))
+        for move in self.get_surrounding_moves(point):
+            self._add_point(point_type(x=move.point.x, y=move.point.y))
 
             if dept > 0:
                 # recursively add more surrounding
-                self.add_surrounding(point=surrounding_point,
+                self.add_surrounding(point=move.point,
                                      point_type=point_type,
                                      dept=dept - 1)
 
@@ -403,38 +409,10 @@ class GameState:
                self.get_point_left(point).heat + \
                self.get_point_right(point).heat
 
-    def possible_path(self, start: Point, end: Point = None, end_type=SnakeTailPart):
-
-        queue = [start]
-
-        seen = set()
-        seen.add((start.x, start.y))
-        total_seen = 0
-
-        while queue:
-
-            last_element = queue.pop(0)
-
-            for possible_move in [self.get_point_up(last_element),
-                                  self.get_point_down(last_element),
-                                  self.get_point_right(last_element),
-                                  self.get_point_left(last_element)]:
-
-                total_seen += 1
-
-                if (end and possible_move == end) or (end_type and isinstance(possible_move, end_type)):
-                    return total_seen
-
-                if not ((possible_move.x, possible_move.y) in seen) and (isinstance(possible_move, Safe) or isinstance(possible_move, HighDanger)):
-                    seen.add((possible_move.x, possible_move.y))
-
-                    possible_move.mark()
-                    queue.append(possible_move)
-
-        return 0
-
     def astar(self, start: Point, end: Point):
-        # todo: add logic when I move
+        # todo: add logic when I move make the snack move (do_move())
+        # this will need to keep the game state for each position in the q
+        # todo: return the actual path not just true/false
 
         stack = LifoQueue()
 
@@ -443,9 +421,6 @@ class GameState:
         stack.put(start)
         start.mark()
 
-        # {point: board_state}
-        # do_move eveytime unstack before storing the
-
         while not stack.empty():
 
             current_move = stack.get()
@@ -453,7 +428,7 @@ class GameState:
             if current_move == end:
                 return True
 
-            moves = game_state.get_possible_moves(current_move, exception=end)
+            moves = [move.point for move in game_state.get_possible_moves(current_move, exception=end)]
             moves.sort(key=lambda x: x.distance(end), reverse=True)
 
             for move in moves:
@@ -467,8 +442,35 @@ class GameState:
             # print(moves)
 
     def do_move(self, move):
+        """
+
+        :param move:
+        :return:
+        """
         pass
 
+    def spin_and_survive(self):
+
+        moves = self.get_possible_moves(self.me.head)
+
+        for move in moves:
+
+            move.score["distance_tail"] = move.point.distance(self.me.tail)
+            move.score["path_to_tail"] = -25 if self.astar(start=move.point, end=self.me.tail) else 0
+
+            if self.food:
+                distance_food = move.point.distance(self.food[0])
+                if self.me.health < distance_food + 4:
+                    move.score["food"] = distance_food * 100
+
+        sorted_moves = sorted(moves, key=lambda item: item.score.total)
+
+        print("VALID MOVES: ", [move.point for move in sorted_moves])
+
+        for move in sorted_moves:
+            print("CHOSEN MOVE: ", move.point)
+
+            return move.direction
 
     def best_move_score(self):
         """ Algorithm that scores each decisions
@@ -496,7 +498,7 @@ class GameState:
                 move_data["score"]["distance_middle"] = move_data["move"].distance(self.middle) * distance_middle_multiplier
                 move_data["score"]["move_surrounding_heat"] = self.surrounding_heat(move_data["move"]) / 20
 
-                move_data["score"]["path_to_tail"] = -15 if self.astar(start=move_data["move"], end=self.me.tail) else 0
+                move_data["score"]["path_to_tail"] = -25 if self.astar(start=move_data["move"], end=self.me.tail) else 0
 
                 # move_data["score"]["path_corner"] = -15 if self.astar(start=move_data["move"], end=Point(0, 0)) else 0
 

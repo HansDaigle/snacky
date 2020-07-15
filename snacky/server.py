@@ -56,7 +56,11 @@ class Server(object):
 
         print(game_state)
 
-        if self.mode == "score":
+        # special algo
+        if len(game_state.snakes) == 1 or len(game_state.snakes) > 4:
+            return {"move": game_state.spin_and_survive()}
+
+        elif self.mode == "score":
             return {"move": game_state.best_move_score()}
 
         elif self.mode == "move":
