@@ -1,4 +1,4 @@
-from distutils.core import setup
+from setuptools import setup, find_packages
 
 __version__ = '1.0.0'
 
@@ -8,6 +8,6 @@ setup(name='snacky',
       author='Hans Daigle',
       author_email='hansdaigle@me.com',
       url='https://github.com/HansDaigle/snacky',
-      packages=['snacky'],
+      packages=find_packages(),
       install_requires=["fastapi", "uvicorn[standard]", "gunicorn"],
       )

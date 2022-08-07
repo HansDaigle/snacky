@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 
 DEATH = 50
+DANGER = 30
 
 
 class Ruleset(BaseModel):
@@ -67,6 +68,21 @@ class Point(BaseModel):
     def get_coordinates_left(self) -> (int, int):
         return {"x": self.x - 1, "y": self.y}
 
+    def resolve_direction(self, point_toward):
+        if self.get_coordinates_up() == {"x": point_toward.x, "y": point_toward.y}:
+            return "up"
+
+        elif self.get_coordinates_down() == {"x": point_toward.x, "y": point_toward.y}:
+            return "down"
+
+        elif self.get_coordinates_right() == {"x": point_toward.x, "y": point_toward.y}:
+            return "right"
+
+        elif self.get_coordinates_left() == {"x": point_toward.x, "y": point_toward.y}:
+            return "left"
+        else:
+            return None
+
 
 class SafePoint(Point):
     heat = 15
@@ -87,13 +103,13 @@ class KillPoint(Point):
 
 
 class DangerPoint(Point):
-    heat = 30
+    heat = DANGER
 
     def __str__(self):
         return "X"
 
 
-class Hazard(Point):
+class HazardPoint(Point):
     heat = DEATH
 
     def __str__(self):
@@ -166,7 +182,7 @@ class Board(BaseModel):
     height: int
     width: int
     food: List[FoodPoint]
-    hazards: List[Hazard]
+    hazards: List[HazardPoint]
     snakes: List[Snake]
 
 
@@ -198,7 +214,7 @@ class Move(OutputMove):
     score: Score = Score()
 
     def __repr__(self):
-        return f"{self.move} ({self.point.x}, {self.point.y}) - {self.score.total}"
+        return f"{self.move} ({self.point.x}, {self.point.y}) - {self.score.items()} [{self.score.total}]"
 
 
 class Info(BaseModel):

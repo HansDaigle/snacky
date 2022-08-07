@@ -3,13 +3,13 @@ import functools
 import logging
 from copy import deepcopy
 from queue import LifoQueue
-from typing import List
+from typing import List, Iterator
 
 from snacky.models import (GameState, BodyPoint, Move,
-                           Snake, TailPoint, HeadPoint,
+                           Snake, HazardPoint, HeadPoint,
                            Point, FoodPoint, WallPoint,
                            DangerPoint, KillPoint, SafePoint,
-                           DEATH)
+                           DEATH, DANGER)
 
 
 logger = logging.getLogger(__name__)
@@ -33,12 +33,15 @@ class Grid:
             [SafePoint(x=x, y=y) for x in range(self.width)] for y in range(self.height)
         ]
 
+        # add hazard to the grid
+        for hazard in game_state.board.hazards:
+            self.add_hazard(hazard)
+
         # add food to the grid
         for food in game_state.board.food:
-            self.add_point(FoodPoint(x=food.x, y=food.y))
-            self.food.append(food)
+            self.add_food(food)
 
-        # sort the food in order closest to head
+        # sort the food in distance closest to head
         self.food.sort(key=lambda x: x.distance(self.you.head))
 
         # add snakes to the board
@@ -46,8 +49,79 @@ class Grid:
             # add all the snakes
             self.add_snake(snake=snake)
 
-        # sort the snakes in distance
+        # sort the snakes in distance closest to head
         self.snakes.sort(key=lambda x: x.head.distance(self.you.head))
+
+    def add_point(self, point: Point) -> None:
+        """ Adding a point to the grid and handling out of bounce exceptions
+        """
+        if point:
+            try:
+                if self.is_safe(self.get_point(point.x, point.y)):
+                    self.grid[point.y][point.x] = point
+
+                else:
+                    logger.debug("Trying to overwrite a danger point.")
+
+            except IndexError:
+                logging.error("Trying to add a point outside of the grid.")
+                raise
+        else:
+            logging.error("Trying to add point that is not valid.")
+
+    def add_hazard(self, hazard: HazardPoint):
+        self.add_point(HazardPoint(x=hazard.x, y=hazard.y))
+        self.food.append(hazard)
+
+    def add_food(self, food: FoodPoint):
+        self.add_point(FoodPoint(x=food.x, y=food.y))
+        self.food.append(food)
+
+    def add_snake(self, snake: Snake) -> None:
+        """ Add a full snake to the grid and add the snake object to the snake list
+        :param snake: The snake object to add
+        """
+
+        # add the head
+        if self.you.id == snake.id:
+            snake.head.you = True
+
+        self.add_point(snake.head)
+
+        # add the tail
+        self.add_point(snake.tail)
+
+        # add the body
+        for body_part in snake.body:
+            if body_part != snake.head or body_part != snake.tail:
+                self.add_point(body_part)
+
+        # adding the snake to the list of snakes
+        self.snakes.append(snake)
+
+        # add danger around bigger enemy snakes head or kill box
+        if self.you.id != snake.id:
+            if self.you.size <= snake.size:
+                self.add_points_around(snake.head, point_type=DangerPoint)
+            else:
+                self.add_points_around(snake.head, point_type=KillPoint)
+
+    def add_points_around(self, point: Point, point_type, dept=0) -> None:
+        """ Will add a type of point around a given point
+
+        :param point: The point to surround with heat
+        :param point_type: The point type to surround with
+        :param dept: Recursively add the heat to points
+        """
+
+        for point in self.get_points_around(point):
+            self.add_point(point_type(x=point.x, y=point.y))
+
+            if dept > 0:
+                # recursively add more surrounding
+                self.add_points_around(point=point,
+                                       point_type=point_type,
+                                       dept=dept - 1)
 
     def get_point_up(self, point: Point):
         """ Gets the point up to a given point
@@ -81,56 +155,37 @@ class Grid:
         """
         return self.get_point(**point.get_coordinates_left())
 
-    def get_surrounding_moves(self, point: Point) -> list:
-        """ Easy way of returning all surrounding moves of a given point
+    def get_points_around(self, point: Point) -> list:
+        """ Easy way of returning all surrounding points of a given point
 
         :param point: initial point
         :return: all 4 points around the initial point
         """
-        return [Move(move="up", point=self.get_point_up(point)),
-                Move(move="down", point=self.get_point_down(point)),
-                Move(move="right", point=self.get_point_right(point)),
-                Move(move="left", point=self.get_point_left(point))]
+        return [self.get_point_up(point),
+                self.get_point_down(point),
+                self.get_point_right(point),
+                self.get_point_left(point)]
 
-    def get_possible_moves(self, point: Point, exception: Point = None) -> List[Move]:
-        """
-        :param point: Point to look around for possible move
+    def filter_dangers(self, points: List[Point], exception: Point = None) -> List[Point]:
+        """ Filter out the dangerous points from a list of Points
+
+        :param points: List of points to filter
         :param exception: A point that should be exempt from the rule
-        :return: Return a list of moves that will not kill you
+        :return: Return a list of points that will not kill you
         """
-        possible_moves: List[Move] = []
-        for move in self.get_surrounding_moves(point):
+        safe_points = []
+        for point in points:
+            if self.is_safe(point):
+                safe_points.append(point)
 
-            if move.point.heat < DEATH or \
-               move.point == exception or \
-               (self.turn >= 3 and self.you.health < 100 and move.point == self.you.tail):
+        return safe_points
 
-                possible_moves.append(move)
+    def is_safe(self, point: Point, exception: Point = None) -> Point:
 
-        return possible_moves
-
-    def add_point(self, point: Point) -> None:
-        """ Adding a point to the grid and handling out of bounce exceptions
-            * Will only overwrite Safe points
-
-        :param point: Point to add
-        """
-        if point:
-            try:
-
-                point_to_overwrite = self.get_point(point.x, point.y)
-
-                if isinstance(point_to_overwrite, SafePoint) or point_to_overwrite.heat <= point.heat:
-                    self.grid[point.y][point.x] = point
-
-                else:
-                    logger.debug("Trying to overwrite a point that is not Safe")
-
-            except IndexError:
-                logging.error("Trying to add a point outside of the grid")
-                raise
-        else:
-            logging.error("Trying to add point that is not valid")
+        return point.heat < DEATH or \
+           point.heat < DANGER or \
+           point == exception or \
+           (self.turn >= 3 and self.you.health < 100 and point == self.you.tail)
 
     def get_point(self, x: int, y: int):
         """ Helper to get a Point object at a given point
@@ -148,10 +203,10 @@ class Grid:
             elif x == -1:
                 return WallPoint(x=x, y=y)
 
-            elif y == self.width:
+            elif y == self.height:
                 return WallPoint(x=x, y=y)
 
-            elif x == self.height:
+            elif x == self.width:
                 return WallPoint(x=x, y=y)
 
             else:
@@ -161,52 +216,6 @@ class Grid:
         except (IndexError, AttributeError):
             logging.error("Trying to access a point outside the grid")
             return WallPoint(x=x, y=y)
-
-    def add_snake(self, snake: Snake) -> None:
-        """ Add a full snake to the grid and add the snake object to the snake list
-        :param snake: The snake object to add
-        """
-
-        # add the body
-        for body_part in snake.body:
-            if body_part != snake.head or body_part != snake.tail:
-                self.add_point(body_part)
-
-        # add the head
-        if self.you.id == snake.id:
-            snake.head.you = True
-
-        self.add_point(snake.head)
-
-        # add the tail
-        self.add_point(snake.tail)
-
-        # adding the snake to the list of snakes
-        self.snakes.append(snake)
-
-        # add danger around bigger enemy snakes head or kill box
-        if self.you.id != snake.id:
-            if self.you.size <= snake.size:
-                self.add_points_around(snake.head, point_type=DangerPoint)
-            else:
-                self.add_points_around(snake.head, point_type=KillPoint)
-
-    def add_points_around(self, point: Point, point_type, dept=0) -> None:
-        """ Will add a type of point around a given point
-
-        :param point: The point to surround with heat
-        :param point_type: The point type to surround with
-        :param dept: Recursively add the heat to points
-        """
-
-        for move in self.get_surrounding_moves(point):
-            self.add_point(point_type(x=move.point.x, y=move.point.y))
-
-            if dept > 0:
-                # recursively add more surrounding
-                self.add_points_around(point=move.point,
-                                       point_type=point_type,
-                                       dept=dept - 1)
 
     def find_biggest_enemy_snake(self):
         biggest_snake = None
@@ -219,8 +228,8 @@ class Grid:
 
     def heat_around(self, point: Point):
         total_heat = 0
-        for move in self.get_surrounding_moves(point):
-            total_heat += move.point.heat
+        for point in self.get_points_around(point):
+            total_heat += point.heat
 
         return total_heat
 
@@ -237,12 +246,12 @@ class Grid:
         start.mark()
         while not stack.empty():
 
-            current_move = stack.get()
+            stack_point = stack.get()
 
-            if current_move == end:
+            if stack_point == end:
                 return True
 
-            points = [move.point for move in grid.get_possible_moves(current_move, exception=end)]
+            points = [point for point in grid.filter_dangers(grid.get_points_around(stack_point), exception=end)]
             points.sort(key=lambda p: p.distance(end), reverse=True)
 
             for point in points:
@@ -264,21 +273,28 @@ class Grid:
 
     def spin_and_survive(self):
         print("SPIN TO SURVIVE")
-        possible_moves = self.get_possible_moves(self.you.head)
+        safe_points_around = self.filter_dangers(self.get_points_around(self.you.head))
 
-        for move in possible_moves:
+        moves = []
+        for point in safe_points_around:
+            move = Move(move=self.you.head.resolve_direction(point),
+                        point=point)
             # edit the score for each possible move
+            move.score["heat"] = move.point.heat
+            move.score["no_food"] = 30 if isinstance(move.point, FoodPoint) else 0  # we don't want food
             move.score["distance_tail"] = move.point.distance(self.you.tail)
-            move.score["path_to_tail"] = -25 if self.astar(start=move.point, end=self.you.tail) else 0
+            move.score["path_to_tail"] = -30 if self.astar(start=move.point, end=self.you.tail) else 0
 
             if self.food:
                 distance_food = move.point.distance(self.food[0])  # since we ordered the food this is the closest food
                 if self.you.health < distance_food + 5:
+                    move.score.pop("no_food")
                     move.score["food"] = distance_food * 100
 
-        sorted_moves = sorted(possible_moves, key=lambda item: item.score.total)
+            moves.append(move)
+        sorted_moves = sorted(moves, key=lambda item: item.score.total)
 
-        print("VALID MOVES: ", [move.point for move in sorted_moves])
+        print("VALID MOVES: ", sorted_moves)
 
         for move in sorted_moves:
             print("CHOSEN MOVE: ", move)
@@ -287,7 +303,7 @@ class Grid:
 
     def best_move_score(self):
         print("BEST MOVE SCORE")
-        possible_moves = self.get_possible_moves(self.you.head)
+        safe_points_around = self.filter_dangers(self.get_points_around(self.you.head))
 
         # settings
         biggest_enemy_snake = self.find_biggest_enemy_snake()
@@ -295,7 +311,11 @@ class Grid:
         kill_multiplier = 1.2
         distance_middle_multiplier = 1.5
 
-        for move in possible_moves:
+        moves = []
+
+        for point in safe_points_around:
+            move = Move(move=self.you.head.resolve_direction(point),
+                        point=point)
             # edit the score for each possible move
             move.score["heat"] = move.point.heat
             move.score["distance_middle"] = move.point.distance(self.middle) * distance_middle_multiplier
@@ -314,8 +334,9 @@ class Grid:
             if biggest_enemy_snake is not None and self.you.size > biggest_enemy_snake.size:
                 closest_smaller_snake = self.snakes[1]
                 move.score["kill"] = move.point.distance(closest_smaller_snake.head) * kill_multiplier
+            moves.append(move)
 
-        sorted_moves = sorted(possible_moves, key=lambda item: item.score.total)
+        sorted_moves = sorted(moves, key=lambda item: item.score.total)
 
         print("SORTED MOVES: ", sorted_moves)
 
@@ -336,12 +357,12 @@ class Grid:
         :return:
         """
 
-        possible_moves = self.get_possible_moves(self.you.head)
+        safe_points_around = self.filter_dangers(self.get_points_around(self.you.head))
 
         # sorted moves in order of heat
-        sorted_moves = sorted(possible_moves, key=lambda m: m.point.heat)
+        sorted_points = sorted(safe_points_around, key=lambda m: point.heat)
 
-        print("POSSIBLE MOVES: ", sorted_moves)
+        print("POSSIBLE POINTS: ", sorted_points)
 
         biggest_enemy_snake = self.find_biggest_enemy_snake()
 
@@ -404,7 +425,7 @@ class Grid:
 
     def __str__(self):
         """Return an ASCII art representation of the board"""
-
+        print("x", self.width, "y", self.height)
         header = "╔"
         for x in range(self.width):
             header += f"={x}" + "=" * (2 - len(str(x)))
@@ -413,7 +434,7 @@ class Grid:
 
         header += "╗"
 
-        spacer = "╟┄" + "┄┼┄".join(["┄"] * self.height) + "┄╢"
+        spacer = "╟┄" + "┄┼┄".join(["┄"] * self.width) + "┄╢"
 
         footer = "╚"
 

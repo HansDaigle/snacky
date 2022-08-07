@@ -27,7 +27,7 @@ async def root():
 
     return Info(**{
         "apiversion": "1",
-        "author": "Snacky",
+        "author": "HansDaigle",
         "color": "#E80978",
         "head": "pixel",
         "tail": "pixel",
@@ -133,7 +133,7 @@ def is_in_trace_mode():
     return bool(sys.gettrace())
 
 
-if __name__ == "__main__":
+def main():
     multi_process = True
     host = "127.0.0.1"
     port = 9291
@@ -154,3 +154,7 @@ if __name__ == "__main__":
             debug=is_in_trace_mode(),
             reload=is_in_trace_mode(),
         )
+
+
+if __name__ == "__main__":
+    main()
