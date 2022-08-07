@@ -9,5 +9,5 @@ setup(name='snacky',
       author_email='hansdaigle@me.com',
       url='https://github.com/HansDaigle/snacky',
       packages=['snacky'],
-      install_requires=["cherrypy"],
+      install_requires=["fastapi", "uvicorn[standard]", "gunicorn"],
       )
